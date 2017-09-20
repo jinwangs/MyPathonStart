@@ -1,0 +1,2 @@
+paramiko ssh 连接后执行命令报错。
+AttributeError: 'NoneType' object has no attribute 'open_session'
