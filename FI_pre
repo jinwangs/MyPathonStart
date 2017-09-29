@@ -1,0 +1,317 @@
+#!/usr/bin/python
+#_*_coding: utf-8 _*_
+
+import sys
+import os
+import paramiko
+import time
+import re
+
+
+class FusionInsight(object):
+    # 初始化参数
+    def __init__(self,valusesHost):
+        # hostInfoDict_keys = list(hostInfoDict.keys())
+        self.hostname = valusesHost['hostname']
+        self.ip = valusesHost['ip']
+        self.port = 22
+        self.username = valusesHost['username']
+        self.passwd = valusesHost['passwd']
+        self.disk =   valusesHost['disk']
+        self.fileDirPath = os.getcwd()
+        self.zipfile = 'FIPreinstall-1.1.0.zip'
+        self.filePath = os.path.join(self.fileDirPath,self.zipfile)
+
+
+    def run(self):
+        self.connect()
+        # self.upload()          #分发文件
+        # time.sleep(1)
+        # self.decomparession()  # 解压上传文件
+        # time.sleep(2)
+        # self.rpmInstall()      #rpm安装
+        # time.sleep(2)
+        # # # self.formatDisk()    #执行格式化磁盘脚本
+        # # # time.sleep(2)
+        # self.rename()          #修改主机名
+        # time.sleep(1)
+        # self.reAuth()          #修改文件权限
+        # time.sleep(1)
+        # self.systemFiel()      #修改系统文件sysctl
+        # time.sleep(1)
+        # # self.ntp()             #修改ntp
+        # # time.sleep(1)
+        # self.DNS()             #修改DNS
+        # time.sleep(1)
+        self.close()
+
+
+    # 用于ssh连接
+    def connect(self):
+        try:
+            conn = paramiko.Transport((self.ip,self.port))
+            conn.connect(username=self.username,password=self.passwd)
+            self.__transport = conn
+        except Exception:
+            sys.exit("%s or %s is bad. Or %s is bad." %(self.username,self.passwd,self.ip))
+
+
+    #上传格式化磁盘脚本和rpm包
+    def upload(self):
+        if os.path.isfile(self.filePath):
+            print('='*30 + 'Start Upload' + '=' * 30)
+            sftp = paramiko.SFTPClient.from_transport(self.__transport)
+            if self.username == 'root':
+                sftp.put(self.filePath,'/root/FIPreinstall-1.1.0.zip')
+                try:
+                    sftp.file('/root/FIPreinstall-1.1.0.zip')
+                    # print(s)
+                    print('%s(%s) upload success.' %(self.hostname ,self.ip))
+                except IOError as e:
+                    # print(e)
+                    print('%s(%s) upload failed.' %(self.hostname, self.ip))
+            else:
+                sys.exit('please use root.')
+        else:
+            exit('files not exist')
+        print('='*30 + 'End Upload' + '='*30)
+
+
+    #解压文件
+    def decomparession(self):
+        print('=' * 30 + 'Start Decomparession' + '=' * 30)
+        if os.path.isfile(self.filePath):
+            ssh = paramiko.SSHClient()
+            ssh._transport = self.__transport
+            if self.username == 'root':
+                stdin, stdout, stderr = ssh.exec_command('cd /root/\nrm -rf /root/resource\n/usr/bin/unzip FIPreinstall-1.1.0.zip\ncd /root/resource/\n/usr/bin/unzip /root/resource/dt_os_rpm.zip\n')
+                for output in stdout:
+                    sys.stdout.write(output)
+            else:
+                sys.exit('please use root.')
+        else:
+            sys.exit('file not exist')
+        print('='*30 + 'End Decomparession' + '='*30)
+
+
+    #安装rpm包
+    def rpmInstall(self):
+        print('=' * 30 + 'Start rpm install' + '=' * 30)
+        ssh = paramiko.SSHClient()
+        ssh._transport = self.__transport
+        outputList = []
+        stdin, stdout, stderr = ssh.exec_command('cd /root/resource/dt_os_rpm\nls\n')
+        for output in  stdout:
+            outputList.append(output)
+        for rpmName in outputList:
+            stdin, stdout, stderr = ssh.exec_command('cd /root/resource/dt_os_rpm\nchmod +x ./*\nrpm -ivh %s\n' %rpmName)
+            sys.stdout.write(stdout.read())
+            sys.stdout.write(stderr.read())
+        print('=' * 30 + 'End rpm install' + '=' * 30)
+
+
+
+    # 执行格式化磁盘脚本
+    def formatDisk(self):
+        print('='*30 + 'Start Format' + '='*30)
+        filePath = os.path.join('/root/resource/', 'create_vol.sh')
+        print('Format script file:%s' %filePath)
+        ssh = paramiko.SSHClient()
+        ssh._transport = self.__transport
+        stdin, stdout, stderr = ssh.exec_command('chmod +x %s\nbash %s %s\n' %(filePath,filePath,self.disk),timeout=0)
+        if len(stderr.read()) != 0:
+            print('script execute failed.')
+            for outputerr in stderr:
+                sys.stdout.write(outputerr)
+        else:
+            for output in stdout:
+                sys.stdout.write(output)
+        print('='*30 + 'End format' + '='*30)
+
+
+    # 修改主机名
+    def rename(self):
+        print('='*30 + 'Start Amend Hostname' + '='*30)
+        ssh = paramiko.SSHClient()
+        ssh._transport = self.__transport
+        stdin, stdout, stderr = ssh.exec_command('cat /etc/HOSTNAME')
+        sys.stdout.write('After name:%s'%stdout.read())
+        stdin, stdout, stderr = ssh.exec_command('echo  %s > /etc/HOSTNAME' % self.hostname)
+        stdin, stdout, stderr = ssh.exec_command('cat /etc/HOSTNAME')
+        sys.stdout.write('Current name:%s' % stdout.read())
+        stdin, stdout, stderr = ssh.exec_command('cat /etc/hosts')
+        for output in stdout:
+            if not output.startswith('#'):
+                sys.stdout.write('After hosts: %s' % output)
+        stdin, stdout, stderr = ssh.exec_command("/usr/bin/sed -i '/^%s/d' /etc/hosts\nsed -i '$a %s %s' /etc/hosts\ncat /etc/hosts\n" %(self.ip,self.ip,self.hostname))
+        for outputAgin in stdout:
+            if not outputAgin.startswith('#'):
+                sys.stdout.write('Current hosts:%s' % outputAgin)
+        print('=' * 30 + 'End Amend Hostname' + '=' * 30)
+
+
+    # 修改文件权限
+    def reAuth(self):
+        print('=' * 30 + 'Start Chmod  Auth' + '=' * 30)
+        ssh = paramiko.SSHClient()
+        ssh._transport = self.__transport
+        stdin,stdout,stderr = ssh.exec_command('chmod 644 /etc/group\nchmod 644 /etc/passwd\nchmod 644 /etc/profile\nchmod 655 /var/lib/rpm/*\nls -l /etc/group\nls -l /etc/passwd\nls -l /etc/profile\nls -l /var/lib/rpm/ ')
+        for output in stdout:
+            sys.stdout.write('Current Auth:%s' %output)
+        print('=' * 30 + 'End Chmod Auth' + '=' * 30)
+
+
+    # 修改系统文件sysctl
+    def systemFiel(self):
+        print('=' * 30 + 'Start Amend sysctl' + '=' * 30)
+        ssh = paramiko.SSHClient()
+        ssh._transport = self.__transport
+        questionList = []
+        Flag = True
+        while Flag:
+            stdin, stdout, stderr = ssh.exec_command('sysctl -p | grep "No such file or directory"')  #检测问题项
+            orgStderr = stderr.read()
+            stderrSplit = orgStderr.split('\n')  #生成问题项列表
+            # print stderrSplit
+            stderrSplit.remove('')   #去掉列表中最后一项空字符串
+            if stderrSplit:
+                #重组匹配项
+                for output in stderrSplit:
+                    sys.stdout.write('Problem option:%s\n'% output)
+                    outputCut = output.split(':')[0]
+                    # print outputCut
+
+                    # outputCutAgin = outputCut.split()[2]
+                    parameter = outputCut.split('/')[-2] + '.' + outputCut.split('/')[-1]
+                    questionList.append(parameter)
+                for quseionOption in  questionList:
+                    stdin, stdout, stderr = ssh.exec_command('sed -i "/%s/s/^/#&/g" /etc/sysctl.conf' %quseionOption)
+            else:
+                Flag = False
+                print('sysctl amended')
+        print('=' * 30 + 'End Amend sysctl' + '=' * 30)
+
+    # 修改ntp
+    def ntp(self):
+        pass
+
+    # 修改DNS
+    def DNS(self):
+        print('=' * 30 + 'Start Amend DNS' + '=' * 30)
+        ssh = paramiko.SSHClient()
+        ssh._transport = self.__transport
+        dnsList = []
+        stdin, stdout, stderr = ssh.exec_command('cat /etc/resolv.conf | grep -v "^#" | grep -v "^$"\n')   #匹配没有注释的选项
+        #匹配的选项放入列表
+        for output in stdout:
+            sys.stdout.write('After:%s' % output)
+            dnsList.append(output)
+
+        if dnsList:   #判断列表的空与否
+            for dnsOption in dnsList:
+                stdin, stdout, stderr = ssh.exec_command('sed -i "/%s/s/^/#&/g" /etc/resolv.conf\ncat /etc/resolv.conf\n' %dnsOption.strip().split()[0])
+            sys.stdout.write('/etc/resolv.conf had noted.\n')
+        else:
+            sys.stdout.write('no need note.\n')
+        print('=' * 30 + 'End Amend DNS' + '=' * 30)
+
+
+    #关闭ssh
+    def close(self):
+        self.__transport.close()
+
+
+
+# 获取主机信息
+def host_info(file):
+    print('=' * 30 + 'Host Information' + '=' * 30)
+    fileDirPath =  os.getcwd()   #获取当前工作路径
+    # print(fileDirPath)
+    filePath = os.path.join(fileDirPath,file)
+    # print(filePath)
+
+    # 主机信息转化成字典
+    if os.path.isfile(filePath):
+        with open(filePath,'rt') as handle_file:
+            hosts = handle_file.readlines()
+            if len(hosts) == 0:  #txt 位空
+                sys.exit("no host infomation in file.")
+
+            regex = re.compile("^[A-Z]{3}.*")    #txt中匹配项
+            matchList = []
+
+            for hostInfo in hosts:    #匹配项添加到列表
+                if regex.match(str(hostInfo.strip())):
+                    a = matchList.append(regex.match(str(hostInfo.strip())).group())
+
+            #用列表判断txt数据的存在
+            if (len(matchList)) != 0:
+                hostInfoDict = {}
+                hostitems = {}
+                # hostitemsList = []
+                for hostInfoAgin in matchList:
+                    # print('me: %s' %hostInfoAgin)
+                    # if hostInfoAgin.strip().startswith('#'):
+                    #     continue
+                    # else:
+                    print "===="
+                    # print('Node information:%s' % hostInfoAgin.split())
+                    hostInfoList = hostInfoAgin.split()
+                    print hostInfoList
+                    hostitems['hostname'] = hostInfoList[0]
+                    # print hostitems['hostname']
+                    hostitems['ip'] = hostInfoList[1]
+                    hostitems['username'] = hostInfoList[3]
+                    hostitems['passwd'] = hostInfoList[4]
+                    hostitems['disk'] = hostInfoList[5]
+                    # print hostitems
+                    hostInfoList.append(hostitems)
+                    # key = hostInfoList[0]
+                    # valuse = hostitems
+                    # hostInfoDict[key] = valuse                   #重复执行后，会重写键的值
+                    # # print "===="
+                    # print hostitems
+                    # print hostInfoDict
+                    hostInfoDict.setdefault(hostInfoList[0],hostitems)
+                    print hostInfoDict
+            else:
+                sys.exit("no host infomation in file.")
+            print('='*30 + 'End Host Information' + '='*30)
+            #获取节点个数
+            hostInfoDict_keys = hostInfoDict.keys()
+            counts = int(len(hostInfoDict_keys))
+            # print hostInfoDict
+            return hostInfoDict
+    else:
+        sys.exit('file is not exist')
+
+#主函数
+if __name__ == '__main__':
+    # if not (sys.argv[1] == 'ipfile.txt' and len(sys.argv) == 2):
+    #     print('plwase input right argv')
+    # else:
+    #     hostInfoDict,counts  = host_info(sys.argv[1])
+    hostInfoDict = host_info('ipfile.txt')
+
+    count = 0
+    for itemHost in hostInfoDict.items():
+        # print itemHost
+        valusesHost = itemHost[1]
+        # print valusesHost
+        startcmd = itemHost[0]
+        # print startcmd
+        startcmd = FusionInsight(valusesHost)
+        startcmd.run()
+
+
+#主机信息文件
+
+#添加需要连接主机信息
+
+#hostname    ip              port username  passwd        disk 
+
+#SIG-FI01    192.168.55.120  22   root      Changeme_123  /dev/sdb
+
+NFV-FI01    192.188.3.67  22   root      Changeme_123    /dev/sdb
+NFV-FI02    192.188.3.68  22   root      Changeme_123    /dev/sdb
+NFV-FI03    192.188.3.69  22   root      Changeme_123    /dev/sdb
